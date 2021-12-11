@@ -62,7 +62,7 @@ read -r -d '' SERVER_INIT_CLOUDINIT_TEMPLATE << EOM
 #cloud-config
 
 runcmd:
- - '\curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=$CHANNEL K3S_TOKEN=$SERVER_TOKEN K3S_AGENT_TOKEN=$AGENT_TOKEN INSTALL_K3S_EXEC="server --cluster-init" K3S_KUBECONFIG_MODE=644 sh -'
+ - '\curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=$CHANNEL K3S_TOKEN=$SERVER_TOKEN K3S_AGENT_TOKEN=$AGENT_TOKEN INSTALL_K3S_EXEC="server --cluster-init" K3S_KUBECONFIG_MODE=644 sh -s - --disable traefik'
 EOM
 
 echo "$SERVER_INIT_CLOUDINIT_TEMPLATE" > "${NAME}-init-cloud-init.yaml"
@@ -91,7 +91,7 @@ if [ "${SERVER_COUNT_MACHINE}" -gt 0 ]; then
 #cloud-config
 
 runcmd:
- - '\curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=$CHANNEL K3S_TOKEN=$SERVER_TOKEN K3S_AGENT_TOKEN=$AGENT_TOKEN INSTALL_K3S_EXEC="server --server $URL" K3S_KUBECONFIG_MODE=644 sh -'
+ - '\curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=$CHANNEL K3S_TOKEN=$SERVER_TOKEN K3S_AGENT_TOKEN=$AGENT_TOKEN INSTALL_K3S_EXEC="server --server $URL" K3S_KUBECONFIG_MODE=644 sh -s - --disable traefik'
 EOM
 
     echo "$SERVER_CLOUDINIT_TEMPLATE" > "${NAME}-cloud-init.yaml"
@@ -143,6 +143,22 @@ $MULTIPASSCMD copy-files k3s-server-$NAME:/etc/rancher/k3s/k3s.yaml $NAME-kubeco
 sed "/^[[:space:]]*server:/ s_:.*_: \"https://$(echo $SERVER_IP | sed -e 's/[[:space:]]//g'):6443\"_" $NAME-kubeconfig-orig.yaml > $NAME-kubeconfig.yaml
 
 echo "k3s setup finished"
+
+echo "Installing NGINX Ingress Controller"
+$MULTIPASSCMD exec k3s-server-$NAME -- bash -c "sudo k3s kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/deploy/static/provider/baremetal/deploy.yaml >/dev/null"
+
+echo "Writing ingress.yaml"
+$MULTIPASSCMD exec k3s-server-$NAME -- bash -c " cat > ingress.yaml <<EOF
+spec:
+  template:
+    spec:
+      hostNetwork: true
+EOF
+"
+
+echo "Patching deployment"
+$MULTIPASSCMD exec k3s-server-$NAME -- bash -c 'k3s kubectl patch deployment ingress-nginx-controller -n ingress-nginx --patch "$(cat ingress.yaml)" > /dev/null'
+
 $MULTIPASSCMD exec k3s-server-$NAME -- sudo k3s kubectl get nodes
 echo "You can now use the following command to connect to your cluster"
 echo "$MULTIPASSCMD exec k3s-server-${NAME} -- sudo k3s kubectl get nodes"
